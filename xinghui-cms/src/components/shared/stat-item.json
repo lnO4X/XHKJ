@@ -1,0 +1,17 @@
+{
+  "collectionName": "components_shared_stat_items",
+  "info": {
+    "displayName": "StatItem",
+    "description": "数字亮点"
+  },
+  "attributes": {
+    "number": {
+      "type": "string",
+      "required": true
+    },
+    "label": {
+      "type": "string",
+      "required": true
+    }
+  }
+}

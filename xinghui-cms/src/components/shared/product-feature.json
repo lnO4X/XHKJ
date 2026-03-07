@@ -1,0 +1,16 @@
+{
+  "collectionName": "components_shared_product_features",
+  "info": {
+    "displayName": "ProductFeature",
+    "description": "产品特性"
+  },
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "content": {
+      "type": "text"
+    }
+  }
+}
