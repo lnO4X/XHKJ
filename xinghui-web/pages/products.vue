@@ -5,8 +5,7 @@ const { data: productsData } = await useAsyncData('products', () =>
   find('products', {
     sort: 'sortOrder:asc',
     populate: ['icon', 'cover', 'features'],
-    publicationState: 'live',
-  })
+  }).catch(() => ({ data: [] }))
 );
 
 const products = computed(() => productsData.value?.data || []);

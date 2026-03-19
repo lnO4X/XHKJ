@@ -3,6 +3,12 @@ export default defineNuxtConfig({
 
   modules: ['@nuxtjs/tailwindcss'],
 
+  // 组件在子目录（home/、layout/、common/）中，禁用路径前缀
+  // 这样 components/home/HeroBanner.vue 直接用 <HeroBanner /> 而非 <HomeHeroBanner />
+  components: [
+    { path: '~/components', pathPrefix: false },
+  ],
+
   runtimeConfig: {
     public: {
       strapiUrl: process.env.STRAPI_URL || 'http://localhost:1337',

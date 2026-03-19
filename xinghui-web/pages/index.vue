@@ -1,28 +1,35 @@
 <script setup lang="ts">
 const { find, getSingle, getStrapiMedia } = useStrapi();
 
+// 安全的 API 请求包装：单个接口失败不影响其他数据
+async function safeFetch<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn('[API]', e);
+    return fallback;
+  }
+}
+
 const { data: pageData } = await useAsyncData('homepage', async () => {
   const [banners, products, articles, homepage, companyInfo] = await Promise.all([
-    find('banners', {
+    safeFetch(() => find('banners', {
       sort: 'sortOrder:asc',
       populate: 'image',
       'pagination[limit]': 5,
-      'publicationState': 'live',
-    }),
-    find('products', {
+    }), { data: [] }),
+    safeFetch(() => find('products', {
       sort: 'sortOrder:asc',
       populate: ['icon', 'cover'],
       'pagination[limit]': 4,
-      'publicationState': 'live',
-    }),
-    find('articles', {
+    }), { data: [] }),
+    safeFetch(() => find('articles', {
       sort: ['isTop:desc', 'publishedAt:desc'],
       populate: ['cover', 'category'],
       'pagination[limit]': 3,
-      'publicationState': 'live',
-    }),
-    getSingle('homepage', { populate: 'stats' }),
-    getSingle('company-info'),
+    }), { data: [] }),
+    safeFetch(() => getSingle('homepage', { populate: 'stats' }), { data: null }),
+    safeFetch(() => getSingle('company-info'), { data: null }),
   ]);
   return { banners, products, articles, homepage, companyInfo };
 });

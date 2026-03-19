@@ -7,7 +7,7 @@ const pageSize = 9;
 const currentCategory = computed(() => (route.query.category as string) || '');
 
 const { data: categoriesData } = await useAsyncData('categories', () =>
-  find('categories', { sort: 'name:asc' })
+  find('categories', { sort: 'name:asc' }).catch(() => ({ data: [] }))
 );
 
 const { data: articlesData } = await useAsyncData(
@@ -18,12 +18,11 @@ const { data: articlesData } = await useAsyncData(
       populate: ['cover', 'category'],
       'pagination[page]': currentPage.value,
       'pagination[pageSize]': pageSize,
-      publicationState: 'live',
     };
     if (currentCategory.value) {
       params['filters[category][slug][$eq]'] = currentCategory.value;
     }
-    return find('articles', params);
+    return find('articles', params).catch(() => ({ data: [], meta: { pagination: { page: 1, pageCount: 1 } } }));
   },
   { watch: [currentPage, currentCategory] }
 );

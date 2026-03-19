@@ -2,7 +2,7 @@
 const { getSingle, getStrapiMedia } = useStrapi();
 
 const { data: companyData } = await useAsyncData('about-company', () =>
-  getSingle('company-info', { populate: 'wechatQr' })
+  getSingle('company-info', { populate: 'wechatQr' }).catch(() => ({ data: null }))
 );
 
 const company = computed(() => companyData.value?.data);
