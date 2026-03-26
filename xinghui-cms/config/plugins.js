@@ -1,7 +1,4 @@
-export default ({ env }) => ({
-  // Email provider — 生产环境需要安装 @strapi/provider-email-nodemailer
-  // npm install @strapi/provider-email-nodemailer
-  // 开发环境使用默认 sendmail provider（邮件不会真正发送）
+module.exports = ({ env }) => ({
   ...(env('SMTP_HOST', '') ? {
     email: {
       config: {

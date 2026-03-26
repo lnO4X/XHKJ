@@ -40,3 +40,17 @@ docker-compose.override.yml
 
 # Uploads (managed separately)
 public/uploads/
+
+# Deploy secrets & helper scripts (contain credentials)
+deploy/.env.*
+deploy/scripts/ssh_helper.py
+deploy/scripts/fix-config-ecs2.py
+deploy/scripts/setup-ecs1.py
+deploy/scripts/init-server-centos7.sh
+
+# Temporary files
+*.bat
+*.ps1
+page_output.txt
+page_status.txt
+tmp_*.txt

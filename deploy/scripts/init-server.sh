@@ -1,28 +1,23 @@
 #!/bin/bash
+# Server initialization — CentOS 7
 # Run on both ECS servers
 set -e
 
-echo "=== 更新系统 ==="
-apt update && apt upgrade -y
+echo "=== [1/5] Install base tools ==="
+yum install -y yum-utils git curl vim
 
-echo "=== 安装 Docker ==="
-curl -fsSL https://get.docker.com | sh
+echo "=== [2/5] Install Docker CE ==="
+yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+sed -i 's+download.docker.com+mirrors.aliyun.com/docker-ce+' /etc/yum.repos.d/docker-ce.repo
+yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker
 systemctl start docker
 
-echo "=== 安装 Docker Compose ==="
-apt install docker-compose-plugin -y
-
-echo "=== 安装常用工具 ==="
-apt install -y git curl vim htop
-
-echo "=== 创建项目目录 ==="
-mkdir -p /opt/xhkj
-mkdir -p /opt/backups/postgres
-
-echo "=== 配置 Docker 日志轮转 ==="
+echo "=== [3/5] Configure Docker mirrors + log rotation ==="
+mkdir -p /etc/docker
 cat > /etc/docker/daemon.json << 'DAEMON'
 {
+  "registry-mirrors": ["https://docker.m.daocloud.io", "https://mirror.ccs.tencentyun.com"],
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
@@ -32,6 +27,13 @@ cat > /etc/docker/daemon.json << 'DAEMON'
 DAEMON
 systemctl restart docker
 
-echo "=== 初始化完成 ==="
+echo "=== [4/5] Create project directories ==="
+mkdir -p /opt/xhkj
+mkdir -p /opt/backups/postgres
+
+echo "=== [5/5] Verify ==="
 docker --version
 docker compose version
+git --version
+
+echo "=== Init complete ==="

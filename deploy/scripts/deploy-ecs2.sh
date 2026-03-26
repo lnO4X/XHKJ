@@ -4,13 +4,13 @@ set -e
 
 cd /opt/xhkj
 
-echo "=== 拉取最新代码 ==="
+echo "=== Pull latest code ==="
 git pull origin main
 
-echo "=== 重建并重启数据服务 ==="
+echo "=== Rebuild and restart data services ==="
 cd deploy
-docker compose -f docker-compose.ecs2.yml up -d --build
+docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml up -d --build
 
-echo "=== 查看状态 ==="
-docker compose -f docker-compose.ecs2.yml ps
-echo "=== 部署完成 ==="
+echo "=== Status ==="
+docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml ps
+echo "=== ECS-2 deploy complete ==="

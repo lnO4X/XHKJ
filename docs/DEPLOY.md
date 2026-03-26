@@ -1,9 +1,9 @@
 ---
 id: DEPLOY
 title: 部署方案
-version: 1.0.0
-updated: 2026-03-05
-status: draft
+version: 2.0.0
+updated: 2026-03-20
+status: active
 owner: Eason
 depends_on: [ENV, TECH]
 ---
@@ -23,454 +23,218 @@ depends_on: [ENV, TECH]
                      │  xhmxb.com   │
                      └──────┬───────┘
                             │
-                     ┌──────▼───────┐
-                     │   ECS-1      │
-                     │   4C8G       │
-                     │              │
-                     │  Nginx :443  │ ← SSL 终止
-                     │      │       │
-                     │  Nuxt :3000  │ ← SSR 渲染
-                     └──────┬───────┘
-                            │ 内网
-                     ┌──────▼───────┐
-                     │   ECS-2      │
-                     │   4C8G       │
-                     │              │
-                     │ Strapi :1337 │ ← CMS API
-                     │ PG     :5432 │ ← 数据库
-                     │ Redis  :6379 │ ← 缓存
-                     └──────────────┘
+                     ┌──────▼───────────────┐
+                     │   ECS-1              │
+                     │   8.163.50.32        │
+                     │   4C8G CentOS 7      │
+                     │                      │
+                     │  Nginx :80/:443      │ ← SSL 终止
+                     │      │               │
+                     │  Nuxt :3000          │ ← SSR 渲染
+                     └──────┬───────────────┘
+                            │ 内网 192.168.0.x
+                     ┌──────▼───────────────┐
+                     │   ECS-2              │
+                     │   8.138.133.16       │
+                     │   4C8G CentOS 7      │
+                     │                      │
+                     │ Strapi :1337         │ ← CMS API
+                     │ PG     :5432         │ ← 数据库
+                     │ Redis  :6379         │ ← 缓存
+                     └──────────────────────┘
 ```
 
 ### 职责分离
 
 | 服务器 | 角色 | 公网 | 理由 |
 |--------|------|------|------|
-| ECS-1 | Web 网关 + SSR | ✅ 开放 80/443 | 承受公网流量 |
-| ECS-2 | 数据 + CMS | ❌ 仅内网 | 数据库安全隔离 |
+| ECS-1 (192.168.0.13) | Web 网关 + SSR | ✅ 开放 80/443 | 承受公网流量 |
+| ECS-2 (192.168.0.14) | 数据 + CMS | ⚠️ 待限制 | 数据库安全隔离 |
 
 ---
 
-## 二、ECS-1 部署
+## 二、服务器初始化
 
-### 2.1 目录结构
+> 已于 2026-03-20 完成初始化。以下记录操作步骤供参考。
 
-```
-/opt/xhkj/
-├── xinghui-web/          # Nuxt 应用代码
-│   └── Dockerfile
-├── nginx/
-│   ├── conf.d/
-│   │   └── xhmxb.conf
-│   └── ssl/
-│       ├── xhmxb.com.pem
-│       └── xhmxb.com.key
-├── docker-compose.yml
-└── .env
+### 2.1 初始化脚本 (CentOS 7)
+
+```bash
+# 在两台 ECS 上都执行 (实际脚本: deploy/scripts/init-server.sh)
+bash /opt/xhkj/deploy/scripts/init-server.sh
 ```
 
-### 2.2 docker-compose.yml
+安装内容: Docker CE 26.1.4 + Compose v2.27.1 + git + 项目目录
 
-```yaml
-version: "3.8"
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - nuxt
-    restart: always
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+### 2.2 Docker 镜像加速
 
-  nuxt:
-    build: ./xinghui-web
-    env_file: .env
-    expose:
-      - "3000"
-    restart: always
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+由于 Docker Hub 在中国不可直接访问，需配置镜像加速：
+
+```json
+// /etc/docker/daemon.json (已配置)
+{
+  "registry-mirrors": ["https://docker.m.daocloud.io", "https://mirror.ccs.tencentyun.com"]
+}
 ```
 
-### 2.3 Nuxt Dockerfile
+**首次拉取基础镜像**需手动 tag：
+```bash
+docker pull docker.m.daocloud.io/library/node:22-alpine
+docker tag docker.m.daocloud.io/library/node:22-alpine node:22-alpine
+# postgres, redis, nginx 同理
+```
 
+### 2.3 Dockerfile 中国镜像
+
+所有 Dockerfile 必须添加 Alpine 和 npm 镜像加速：
 ```dockerfile
-FROM node:22-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:22-alpine
-WORKDIR /app
-COPY --from=builder /app/.output .output
-ENV HOST=0.0.0.0 PORT=3000 NODE_ENV=production
-EXPOSE 3000
-CMD ["node", ".output/server/index.mjs"]
-```
-
-### 2.4 Nginx 配置
-
-```nginx
-# /opt/xhkj/nginx/conf.d/xhmxb.conf
-
-upstream nuxt {
-    server nuxt:3000;
-}
-
-upstream strapi {
-    server <ECS-2-内网IP>:1337;   # → 见 ENV.md
-}
-
-server {
-    listen 80;
-    server_name xhmxb.com www.xhmxb.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name xhmxb.com www.xhmxb.com;
-
-    # SSL
-    ssl_certificate     /etc/nginx/ssl/xhmxb.com.pem;
-    ssl_certificate_key /etc/nginx/ssl/xhmxb.com.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-
-    # 安全头
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    # Strapi API 代理
-    location /api/ {
-        proxy_pass http://strapi;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-    }
-
-    # Strapi 文件上传
-    location /uploads/ {
-        proxy_pass http://strapi;
-        proxy_cache_valid 200 30d;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # Strapi Admin（限内网 IP 或办公 IP）
-    location /admin {
-        # allow <办公网络IP>;  # [TODO - 填入办公网络 IP]
-        # deny all;
-        proxy_pass http://strapi;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Nuxt SSR（兜底）
-    location / {
-        proxy_pass http://nuxt;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-
-    # 静态资源长缓存
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
-        proxy_pass http://nuxt;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-}
+# Alpine 包
+RUN sed -i "s/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g" /etc/apk/repositories
+# npm 包
+RUN npm install --registry=https://registry.npmmirror.com
 ```
 
 ---
 
-## 三、ECS-2 部署
+## 三、ECS-2 部署 (数据服务)
 
 ### 3.1 目录结构
 
 ```
-/opt/xhkj/
-├── xinghui-cms/          # Strapi 应用代码
+/opt/xhkj/                   # git clone from GitHub
+├── deploy/
+│   ├── docker-compose.ecs2.yml
+│   ├── .env.ecs2             # 生产环境变量 (不入 git)
+│   └── scripts/
+│       └── backup-pg.sh
+├── xinghui-cms/              # Strapi 源码
 │   └── Dockerfile
-├── backups/
-│   └── postgres/
-├── docker-compose.yml
-└── .env
+└── ...
 ```
 
-### 3.2 docker-compose.yml
-
-```yaml
-version: "3.8"
-services:
-  strapi:
-    build: ./xinghui-cms
-    env_file: .env
-    volumes:
-      - uploads:/app/public/uploads
-    ports:
-      - "1337:1337"    # 仅内网可访问（安全组控制）
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    restart: always
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  postgres:
-    image: postgres:16-alpine
-    env_file: .env
-    environment:
-      POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USERNAME}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"    # 仅本机
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d ${DATABASE_NAME}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: always
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redisdata:/data
-    ports:
-      - "127.0.0.1:6379:6379"    # 仅本机
-    restart: always
-
-volumes:
-  pgdata:
-  redisdata:
-  uploads:
-```
-
-### 3.3 Strapi Dockerfile
-
-```dockerfile
-FROM node:22-alpine AS builder
-RUN apk add --no-cache build-base python3
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:22-alpine
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/config ./config
-COPY --from=builder /app/src ./src
-ENV NODE_ENV=production
-EXPOSE 1337
-CMD ["npm", "run", "start"]
-```
-
-### 3.4 .env.example
+### 3.2 启动命令
 
 ```bash
-# Strapi
-HOST=0.0.0.0
-PORT=1337
-APP_KEYS=<openssl rand -base64 32>,<openssl rand -base64 32>
-API_TOKEN_SALT=<openssl rand -base64 32>
-ADMIN_JWT_SECRET=<openssl rand -base64 32>
-JWT_SECRET=<openssl rand -base64 32>
-TRANSFER_TOKEN_SALT=<openssl rand -base64 32>
-
-# PostgreSQL
-DATABASE_CLIENT=postgres
-DATABASE_HOST=postgres
-DATABASE_PORT=5432
-DATABASE_NAME=xinghui_cms
-DATABASE_USERNAME=xinghui
-DATABASE_PASSWORD=<生成强密码>
-
-# Redis
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=<生成强密码>
-
-# SMTP
-SMTP_HOST=[TODO]
-SMTP_PORT=[TODO]
-SMTP_USER=[TODO]
-SMTP_PASS=[TODO]
+cd /opt/xhkj/deploy
+docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml up -d --build
 ```
+
+### 3.3 容器状态
+
+| 容器 | 镜像 | 端口 | 状态 |
+|------|------|------|------|
+| deploy-strapi-1 | deploy-strapi | 0.0.0.0:1337 | Running |
+| deploy-postgres-1 | postgres:16-alpine | 127.0.0.1:5432 | Running (healthy) |
+| deploy-redis-1 | redis:7-alpine | 127.0.0.1:6379 | Running |
+
+### 3.4 重要: Strapi config 文件格式
+
+生产环境 Strapi v5 不支持 TypeScript config 文件。所有 `config/*.ts` 已转换为 `config/*.js` (CommonJS `module.exports`)。
 
 ---
 
-## 四、服务器初始化脚本
+## 四、ECS-1 部署 (Web 网关)
+
+### 4.1 目录结构
+
+```
+/opt/xhkj/
+├── deploy/
+│   ├── docker-compose.ecs1.yml
+│   ├── .env.ecs1
+│   └── nginx/
+│       └── conf.d/
+│           └── xhmxb.conf
+├── xinghui-web/
+│   └── Dockerfile
+└── ...
+```
+
+### 4.2 启动命令
 
 ```bash
-#!/bin/bash
-# deploy/scripts/init-server.sh
-# 在两台 ECS 上都执行
-
-set -e
-
-echo "=== 更新系统 ==="
-apt update && apt upgrade -y
-
-echo "=== 安装 Docker ==="
-curl -fsSL https://get.docker.com | sh
-systemctl enable docker
-systemctl start docker
-
-echo "=== 安装 Docker Compose ==="
-apt install docker-compose-plugin -y
-
-echo "=== 安装常用工具 ==="
-apt install -y git curl vim htop
-
-echo "=== 创建项目目录 ==="
-mkdir -p /opt/xhkj
-mkdir -p /opt/backups/postgres
-
-echo "=== 配置 Docker 日志轮转 ==="
-cat > /etc/docker/daemon.json << 'DAEMON'
-{
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  }
-}
-DAEMON
-systemctl restart docker
-
-echo "=== 初始化完成 ==="
-docker --version
-docker compose version
+cd /opt/xhkj/deploy
+docker compose --env-file .env.ecs1 -f docker-compose.ecs1.yml up -d --build
 ```
+
+### 4.3 容器状态
+
+| 容器 | 镜像 | 端口 | 状态 |
+|------|------|------|------|
+| deploy-nginx-1 | nginx:alpine | 80, 443 | Running |
+| deploy-nuxt-1 | deploy-nuxt | 3000 (internal) | Running |
+
+### 4.4 Nginx 配置
+
+当前: HTTP 模式 (`server_name _`)，无 SSL。
+域名就绪后: 取消注释 `xhmxb.conf` 中的 HTTPS 配置块，上传 SSL 证书到 `nginx/ssl/`。
 
 ---
 
-## 五、备份策略
+## 五、CI/CD
 
-### 5.1 PostgreSQL 每日备份
+### 5.1 GitHub Actions
 
-```bash
-#!/bin/bash
-# deploy/scripts/backup-pg.sh
-# crontab: 0 3 * * * /opt/xhkj/backup-pg.sh
+文件: `.github/workflows/deploy.yml`
 
-BACKUP_DIR=/opt/backups/postgres
-DATE=$(date +%Y%m%d_%H%M%S)
-CONTAINER=xhkj-postgres-1
+**触发条件:**
+- `push` to `main` 分支 (自动检测变更路径)
+- `workflow_dispatch` 手动触发 (可选 all/ecs1/ecs2)
 
-echo "[$(date)] 开始备份..."
-docker exec $CONTAINER pg_dump -U xinghui xinghui_cms | gzip > "$BACKUP_DIR/xinghui_cms_$DATE.sql.gz"
+**流程:**
+1. 检测变更 (xinghui-cms/ → deploy ECS-2, xinghui-web/ → deploy ECS-1)
+2. SSH 到对应 ECS 执行 `git pull` + `docker compose up -d --build`
+3. 健康检查
 
-# 保留 30 天
-find $BACKUP_DIR -name "*.sql.gz" -mtime +30 -delete
-
-echo "[$(date)] 备份完成: xinghui_cms_$DATE.sql.gz"
+**配置 GitHub Secrets:**
+```
+ECS_SSH_PASSWORD = <两台 ECS 的 SSH 密码>
 ```
 
-### 5.2 上传文件备份
+### 5.2 手动部署
 
 ```bash
-# Strapi uploads 挂载在 Docker volume，可用 docker cp 或直接备份 volume 目录
-# 建议后续迁移到阿里云 OSS，自带冗余存储
-```
-
----
-
-## 六、部署流程
-
-### 6.1 首次部署
-
-```bash
-# 1. 两台 ECS 执行初始化
-scp deploy/scripts/init-server.sh root@<ECS-IP>:/tmp/
-ssh root@<ECS-IP> "bash /tmp/init-server.sh"
-
-# 2. 克隆代码
-ssh root@<ECS-IP>
-cd /opt/xhkj
-git clone https://github.com/lnO4X/XHKJ.git .
-
-# 3. ECS-2: 配置并启动数据服务
-cd /opt/xhkj
-cp .env.example .env
-vim .env  # 填入密码和配置
-docker compose up -d
-# 等待 Strapi 首次启动完成（约 1-2 分钟）
-
-# 4. ECS-1: 配置并启动 Web 服务
-cd /opt/xhkj
-cp .env.example .env
-vim .env  # 填入 ECS-2 内网 IP 和 Strapi URL
-# 将 SSL 证书放到 nginx/ssl/
-docker compose up -d
-
-# 5. 验证
-curl -I https://xhmxb.com
-```
-
-### 6.2 更新部署
-
-```bash
-# 拉取最新代码
+# ECS-2
+ssh root@8.138.133.16
 cd /opt/xhkj && git pull origin main
+cd deploy && docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml up -d --build
 
-# 重建并重启（零停机）
-docker compose up -d --build
-
-# 验证
-docker compose ps
-docker compose logs --tail=50
+# ECS-1
+ssh root@8.163.50.32
+cd /opt/xhkj && git pull origin main
+cd deploy && docker compose --env-file .env.ecs1 -f docker-compose.ecs1.yml up -d --build
 ```
 
 ---
 
-## 七、监控 & 运维
+## 六、备份策略
 
-| 项目 | 方案 |
-|------|------|
-| 进程监控 | Docker restart: always |
-| 日志查看 | `docker compose logs -f [service]` |
-| 磁盘监控 | `df -h` + 阿里云监控告警 |
-| 数据库状态 | `docker exec postgres pg_isready` |
-| SSL 证书到期 | [TODO - 自动续签或阿里云告警] |
+### 6.1 PostgreSQL 每日备份
+
+```bash
+# crontab -l (ECS-2)
+0 3 * * * /bin/bash /opt/xhkj/deploy/scripts/backup-pg.sh >> /opt/backups/postgres/backup.log 2>&1
+```
+
+脚本: `deploy/scripts/backup-pg.sh` — 使用 `docker exec deploy-postgres-1 pg_dump` 备份，gzip 压缩，保留 30 天。
+
+---
+
+## 七、访问地址
+
+| 服务 | URL | 说明 |
+|------|-----|------|
+| 前台首页 | http://8.163.50.32/ | Nuxt SSR |
+| CMS 管理后台 | http://8.163.50.32/admin/ | Strapi Admin (首次需创建管理员) |
+| Strapi API | http://8.163.50.32/api/ | 需配置 Public 权限 |
+
+---
+
+## 八、待办 (域名相关)
+
+- [ ] 配置域名 DNS A 记录 → 8.163.50.32
+- [ ] ICP 备案
+- [ ] 申请 SSL 证书
+- [ ] 更新 nginx 配置为 HTTPS 模式
+- [ ] 更新 .env.ecs1 中 SITE_URL 和 NUXT_PUBLIC_STRAPI_URL
+- [ ] 配置安全组: 限制 ECS-2 仅允许 ECS-1 内网 IP 访问

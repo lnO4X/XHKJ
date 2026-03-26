@@ -1,0 +1,109 @@
+name: Deploy XHKJ
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'xinghui-cms/**'
+      - 'xinghui-web/**'
+      - 'deploy/**'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deploy target'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ecs1
+          - ecs2
+
+env:
+  ECS1_HOST: 8.163.50.32
+  ECS2_HOST: 8.138.133.16
+  SSH_USER: root
+  DEPLOY_DIR: /opt/xhkj
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cms: ${{ steps.filter.outputs.cms }}
+      web: ${{ steps.filter.outputs.web }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cms:
+              - 'xinghui-cms/**'
+            web:
+              - 'xinghui-web/**'
+            deploy:
+              - 'deploy/**'
+
+  deploy-ecs2:
+    needs: detect-changes
+    if: >
+      github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'ecs2') ||
+      github.event_name == 'push' && (needs.detect-changes.outputs.cms == 'true' || needs.detect-changes.outputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to ECS-2 (Strapi + PG + Redis)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.ECS2_HOST }}
+          username: ${{ env.SSH_USER }}
+          password: ${{ secrets.ECS_SSH_PASSWORD }}
+          script: |
+            cd ${{ env.DEPLOY_DIR }}
+            git pull origin main
+            cd deploy
+            docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml up -d --build
+            docker compose --env-file .env.ecs2 -f docker-compose.ecs2.yml ps
+            echo "ECS-2 deploy complete"
+
+  deploy-ecs1:
+    needs: [detect-changes, deploy-ecs2]
+    if: >
+      always() &&
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'ecs1') ||
+       github.event_name == 'push' && (needs.detect-changes.outputs.web == 'true' || needs.detect-changes.outputs.deploy == 'true'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to ECS-1 (Nginx + Nuxt)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.ECS1_HOST }}
+          username: ${{ env.SSH_USER }}
+          password: ${{ secrets.ECS_SSH_PASSWORD }}
+          script: |
+            cd ${{ env.DEPLOY_DIR }}
+            git pull origin main
+            cd deploy
+            docker compose --env-file .env.ecs1 -f docker-compose.ecs1.yml up -d --build
+            docker compose --env-file .env.ecs1 -f docker-compose.ecs1.yml ps
+            echo "ECS-1 deploy complete"
+
+  health-check:
+    needs: [deploy-ecs1, deploy-ecs2]
+    if: always() && (needs.deploy-ecs1.result == 'success' || needs.deploy-ecs2.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for services to start
+        run: sleep 30
+
+      - name: Check Nuxt SSR
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ env.ECS1_HOST }}/)
+          echo "Nuxt: HTTP $STATUS"
+          [ "$STATUS" = "200" ] || exit 1
+
+      - name: Check Strapi Admin
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ env.ECS1_HOST }}/admin/)
+          echo "Strapi Admin: HTTP $STATUS"
+          [ "$STATUS" = "200" ] || exit 1

@@ -1,9 +1,9 @@
 ---
 id: ENV
 title: 环境信息
-version: 1.0.0
-updated: 2026-03-05
-status: draft
+version: 2.0.0
+updated: 2026-03-20
+status: active
 owner: Eason
 depends_on: []
 ---
@@ -22,21 +22,25 @@ depends_on: []
 | 标识 | ECS-1 (Web 网关) | ECS-2 (数据服务) |
 |------|-------------------|-------------------|
 | **用途** | Nginx + Nuxt 3 SSR | Strapi v5 + PostgreSQL + Redis |
-| **规格** | 4C8G | 4C8G |
-| **公网 IP** | [TODO] | 不暴露公网 |
-| **内网 IP** | [TODO] | [TODO] |
-| **操作系统** | [TODO - 建议 Ubuntu 22.04] | [TODO - 建议 Ubuntu 22.04] |
-| **SSH 端口** | 22 | 22 (仅内网) |
-| **SSH 用户** | [TODO] | [TODO] |
-| **地域** | [TODO] | [TODO - 与 ECS-1 同可用区] |
+| **规格** | 4C8G (99G 磁盘) | 4C8G (99G 磁盘) |
+| **公网 IP** | 8.163.50.32 | 8.138.133.16 |
+| **内网 IP** | 192.168.0.13 | 192.168.0.14 |
+| **操作系统** | CentOS 7 | CentOS 7 |
+| **SSH 端口** | 22 | 22 |
+| **SSH 用户** | root | root |
+| **SSH 密码** | [CREDENTIAL:ecs-password] | [CREDENTIAL:ecs-password] |
+| **Docker** | 26.1.4 + Compose v2.27.1 | 26.1.4 + Compose v2.27.1 |
+| **部署状态** | Running (HTTP mode) | Running |
 
 ### 1.2 安全组规则
 
 | 方向 | ECS-1 | ECS-2 |
 |------|-------|-------|
-| **入方向** | 80/tcp (0.0.0.0/0), 443/tcp (0.0.0.0/0), 22/tcp (办公IP) | 1337/tcp (ECS-1内网IP), 22/tcp (ECS-1内网IP) |
+| **入方向** | 80/tcp (0.0.0.0/0), 443/tcp (0.0.0.0/0), 22/tcp (办公IP) | 1337/tcp (192.168.0.13), 22/tcp (ECS-1内网IP) |
 | **出方向** | 全部放行 | 全部放行 |
-| **内网互通** | ↔ ECS-2 全端口 | ↔ ECS-1 全端口 |
+| **内网互通** | ↔ ECS-2 全端口 (192.168.0.0/24) | ↔ ECS-1 全端口 |
+
+> **注意**: ECS-2 的 1337 端口当前对公网开放，建议后续通过安全组限制为仅 ECS-1 内网 IP 可访问。
 
 ---
 
@@ -46,18 +50,19 @@ depends_on: []
 |------|-----|
 | **主域名** | xhmxb.com |
 | **DNS 托管** | [TODO - 阿里云 DNS / CloudFlare?] |
-| **A 记录** | xhmxb.com → ECS-1 公网 IP |
-| **A 记录** | www.xhmxb.com → ECS-1 公网 IP |
+| **A 记录** | xhmxb.com → 8.163.50.32 |
+| **A 记录** | www.xhmxb.com → 8.163.50.32 |
 | **ICP 备案号** | [TODO] |
 | **备案主体** | [TODO - 需确认是否需变更] |
+| **当前状态** | 域名未配置，使用 http://8.163.50.32 直接访问 |
 
 ### SSL 证书
 
 | 项目 | 值 |
 |------|-----|
 | **方案** | [TODO - 阿里云免费证书 / Let's Encrypt] |
-| **证书路径 (ECS-1)** | /etc/nginx/ssl/xhmxb.com.pem |
-| **私钥路径 (ECS-1)** | /etc/nginx/ssl/xhmxb.com.key |
+| **证书路径 (ECS-1)** | /opt/xhkj/deploy/nginx/ssl/xhmxb.com.pem |
+| **私钥路径 (ECS-1)** | /opt/xhkj/deploy/nginx/ssl/xhmxb.com.key |
 | **自动续签** | [TODO] |
 
 ---
@@ -66,13 +71,13 @@ depends_on: []
 
 | 项目 | 值 |
 |------|-----|
-| **类型** | PostgreSQL 16 |
-| **部署位置** | ECS-2 Docker 容器 |
+| **类型** | PostgreSQL 16 (Alpine) |
+| **部署位置** | ECS-2 Docker 容器 (deploy-postgres-1) |
 | **端口** | 5432 (仅 127.0.0.1) |
 | **数据库名** | xinghui_cms |
 | **用户名** | xinghui |
-| **密码** | [CREDENTIAL:pg-password] |
-| **数据卷** | /var/lib/docker/volumes/pgdata |
+| **密码** | [CREDENTIAL:pg-password] → 见 ECS-2 /opt/xhkj/deploy/.env.ecs2 |
+| **数据卷** | Docker volume: deploy_pgdata |
 | **备份路径** | /opt/backups/postgres/ |
 | **备份策略** | 每日 03:00 全量备份，保留 30 天 |
 
@@ -82,10 +87,10 @@ depends_on: []
 
 | 项目 | 值 |
 |------|-----|
-| **类型** | Redis 7 |
-| **部署位置** | ECS-2 Docker 容器 |
+| **类型** | Redis 7 (Alpine) |
+| **部署位置** | ECS-2 Docker 容器 (deploy-redis-1) |
 | **端口** | 6379 (仅 127.0.0.1) |
-| **密码** | [CREDENTIAL:redis-password] |
+| **密码** | [CREDENTIAL:redis-password] → 见 ECS-2 /opt/xhkj/deploy/.env.ecs2 |
 | **用途** | 邮箱验证码 (TTL 5min)、API 响应缓存 |
 
 ---
@@ -113,7 +118,7 @@ depends_on: []
 | **AppSecret** | [CREDENTIAL:wechat-app-secret] |
 | **JS 安全域名** | xhmxb.com |
 | **业务域名** | xhmxb.com |
-| **IP 白名单** | ECS-1 公网 IP |
+| **IP 白名单** | 8.163.50.32 |
 | **管理后台** | https://mp.weixin.qq.com |
 
 ---
@@ -126,7 +131,8 @@ depends_on: []
 | **仓库地址** | https://github.com/lnO4X/XHKJ |
 | **默认分支** | main |
 | **部署分支** | main (生产) |
-| **CI/CD** | [TODO - GitHub Actions / 手动部署?] |
+| **CI/CD** | GitHub Actions (`.github/workflows/deploy.yml`) |
+| **Secrets** | `ECS_SSH_PASSWORD` — 两台 ECS 的 SSH 密码 |
 
 ---
 
@@ -155,14 +161,14 @@ depends_on: []
 
 > 完整变量列表。每个子项目有自己的 `.env.example` 文件。
 
-### xinghui-cms/.env
+### xinghui-cms/.env (ECS-2: /opt/xhkj/deploy/.env.ecs2)
 
 ```bash
 # 服务器
 HOST=0.0.0.0
 PORT=1337
 
-# Strapi 密钥
+# Strapi 密钥 (已自动生成)
 APP_KEYS=                    # 逗号分隔的随机字符串
 API_TOKEN_SALT=              # 随机字符串
 ADMIN_JWT_SECRET=            # 随机字符串
@@ -189,14 +195,15 @@ SMTP_USER=                   # [TODO]
 SMTP_PASS=                   # [CREDENTIAL:smtp-password]
 ```
 
-### xinghui-web/.env
+### xinghui-web/.env (ECS-1: /opt/xhkj/deploy/.env.ecs1)
 
 ```bash
 # Strapi API 地址
-NUXT_PUBLIC_STRAPI_URL=      # 本地: http://localhost:1337 / 生产: http://ECS-2内网IP:1337
-NUXT_PUBLIC_SITE_URL=        # 本地: http://localhost:3000 / 生产: https://xhmxb.com
+STRAPI_URL=                  # 本地: http://localhost:1337 / 生产: http://192.168.0.14:1337
+SITE_URL=                    # 本地: http://localhost:3000 / 生产: http://8.163.50.32
+NUXT_PUBLIC_STRAPI_URL=      # 本地: http://localhost:1337 / 生产: http://8.163.50.32
 
 # 微信 (可选，用于分享)
-NUXT_WECHAT_APP_ID=          # [TODO]
-NUXT_WECHAT_APP_SECRET=      # [CREDENTIAL:wechat-app-secret]
+WECHAT_APP_ID=               # [TODO]
+WECHAT_APP_SECRET=           # [CREDENTIAL:wechat-app-secret]
 ```
